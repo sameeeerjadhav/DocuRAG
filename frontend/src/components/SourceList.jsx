@@ -6,10 +6,7 @@ export default function SourceList({ sources }) {
   if (!sources?.length) return null;
 
   return (
-    <details
-      open
-      className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2"
-    >
+    <details className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
         <svg
           className="source-chevron h-3 w-3 transition-transform"
