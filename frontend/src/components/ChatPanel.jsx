@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { isInsufficient } from "../answerText.js";
 import MessageBubble from "./MessageBubble.jsx";
+
+const STARTERS = [
+  "What is this document about?",
+  "What are the main facts?",
+  "What can you infer that the file does not state?",
+];
+
+const FOLLOW_UPS = ["Say that more briefly", "What else in the file relates to this?"];
 
 function TypingIndicator() {
   return (
@@ -19,7 +28,7 @@ function TypingIndicator() {
   );
 }
 
-export default function ChatPanel({ messages, sending, error, canChat, onSend }) {
+export default function ChatPanel({ messages, sending, error, canChat, onSend, onNewChat }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef(null);
   const areaRef = useRef(null);
@@ -37,13 +46,38 @@ export default function ChatPanel({ messages, sending, error, canChat, onSend })
     onSend(question);
   }
 
+  function ask(question) {
+    if (!question || sending || !canChat) return;
+    onSend(question);
+  }
+
+  const last = messages[messages.length - 1];
+  const showFollowUps =
+    canChat &&
+    !sending &&
+    last?.role === "assistant" &&
+    last.content &&
+    !last.pending &&
+    !isInsufficient(last.content);
+
   return (
     <section className="flex min-h-[32rem] flex-col overflow-hidden rounded-3xl border border-white/80 bg-white/90 shadow-card lg:h-full lg:min-h-0">
-      <div className="border-b border-stone-100 px-5 py-4">
-        <h2 className="text-sm font-semibold text-stone-900">Ask a question</h2>
-        <p className="mt-1 text-sm text-stone-500">
-          Answers use your documents as evidence. DocuRAG can summarize and reason from them, and it labels anything the file does not actually say.
-        </p>
+      <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-stone-900">Ask a question</h2>
+          <p className="mt-1 text-sm text-stone-500">
+            Answers use your documents as evidence. A label shows whether a line is written in the file or inferred from it.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onNewChat}
+          disabled={!messages.length || sending}
+          title="Clears this conversation. Indexed documents stay."
+          className="shrink-0 rounded-xl border border-stone-200 px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-teal-800 hover:text-teal-900 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          New chat
+        </button>
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
@@ -51,8 +85,23 @@ export default function ChatPanel({ messages, sending, error, canChat, onSend })
           <div className="mx-auto mt-10 max-w-sm text-center">
             <p className="font-serif text-2xl text-stone-800">What do your documents say?</p>
             <p className="mt-2 text-sm leading-relaxed text-stone-500">
-              Upload a file on the left, then ask in everyday language. Each answer includes the filename and the matching snippet.
+              {canChat
+                ? "Pick a starting question, or type your own. Follow-ups can refer to the answer you just got."
+                : "Upload a file on the left, then ask in everyday language. Each answer includes the filename and the matching snippet."}
             </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              {STARTERS.map((question) => (
+                <button
+                  key={question}
+                  type="button"
+                  disabled={!canChat || sending}
+                  onClick={() => ask(question)}
+                  className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-left text-xs font-medium text-stone-700 transition hover:border-teal-800 hover:text-teal-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
         {messages.map((message) =>
@@ -75,7 +124,22 @@ export default function ChatPanel({ messages, sending, error, canChat, onSend })
         </p>
       ) : null}
 
-      <form onSubmit={submit} className="border-t border-stone-100 p-3">
+      {showFollowUps ? (
+        <div className="flex flex-wrap gap-2 border-t border-stone-100 px-4 py-3">
+          {FOLLOW_UPS.map((question) => (
+            <button
+              key={question}
+              type="button"
+              onClick={() => ask(question)}
+              className="rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-teal-50 hover:text-teal-900"
+            >
+              {question}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <form onSubmit={submit} className={`p-3 ${showFollowUps ? "" : "border-t border-stone-100"}`}>
         <div className="flex items-end gap-2 rounded-2xl border border-stone-200 bg-stone-50 p-2 focus-within:border-teal-800 focus-within:bg-white">
           <label htmlFor="question" className="sr-only">
             Question

@@ -1,5 +1,35 @@
 import { useRef, useState } from "react";
 
+const UPLOAD_STAGES = [
+  { label: "Read", match: /read|start/i },
+  { label: "Scan", match: /scan|transcrib/i },
+  { label: "Embed", match: /embed/i },
+];
+
+function uploadStage(status) {
+  const text = status || "";
+  const found = UPLOAD_STAGES.findIndex((stage) => stage.match.test(text));
+  return found === -1 ? 0 : found;
+}
+
+function UploadMeter({ status }) {
+  const current = uploadStage(status);
+  return (
+    <ol className="mx-auto mt-3 flex max-w-[14rem] items-center justify-center gap-1.5 px-2">
+      {UPLOAD_STAGES.map((stage, index) => (
+        <li key={stage.label} className="flex flex-1 flex-col items-center gap-1">
+          <span
+            className={`h-1 w-full rounded-full ${index <= current ? "bg-teal-800" : "bg-stone-200"}`}
+          />
+          <span className={`text-[10px] font-semibold uppercase tracking-wide ${index === current ? "text-teal-900" : "text-stone-400"}`}>
+            {stage.label}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function extensionOf(filename) {
   const parts = filename.split(".");
   return parts.length > 1 ? parts.pop().toUpperCase() : "FILE";
@@ -74,9 +104,10 @@ export default function UploadPanel({
           {uploading ? uploadStatus || "Indexing documents…" : "Drop files here or browse"}
         </p>
         <p className="mt-1 text-xs text-stone-500">
-          {uploading ? "This can take a minute for a scan or a large file." : "Up to 10 files, 20 MB each"}
+          {uploading ? "This can take a minute for a scan or a large file." : "Up to 10 files, 20 MB each. Scanned pages are read too."}
         </p>
       </button>
+      {uploading ? <UploadMeter status={uploadStatus} /> : null}
       <input
         ref={inputRef}
         type="file"

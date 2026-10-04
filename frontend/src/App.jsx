@@ -19,6 +19,38 @@ function loadStoredSession() {
   }
 }
 
+function stepState({ uploading, sending, indexed, answered }) {
+  if (uploading) return ["now", "wait", "wait"];
+  if (sending) return ["done", "now", answered ? "now" : "wait"];
+  if (answered) return ["done", "done", "done"];
+  if (indexed) return ["done", "wait", "wait"];
+  return ["wait", "wait", "wait"];
+}
+
+function Pipeline({ uploading, sending, indexed, answered }) {
+  const labels = ["Index", "Search", "Answer"];
+  const states = stepState({ uploading, sending, indexed, answered });
+  return (
+    <ol className="flex items-center gap-1.5 rounded-full bg-white/80 px-2 py-1 shadow-sm">
+      {labels.map((label, index) => {
+        const state = states[index];
+        const tone =
+          state === "now"
+            ? "bg-teal-900 text-white"
+            : state === "done"
+              ? "bg-teal-50 text-teal-900"
+              : "bg-transparent text-stone-400";
+        return (
+          <li key={label} className="flex items-center gap-1.5">
+            {index > 0 ? <span className="h-px w-3 bg-stone-200" /> : null}
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${tone}`}>{label}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function newId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random()}`;
@@ -121,6 +153,14 @@ export default function App() {
     }
   }
 
+  function handleNewChat() {
+    if (!messages.length || sending) return;
+    const confirmed = window.confirm("Start a new chat? Your indexed documents stay.");
+    if (!confirmed) return;
+    setMessages([]);
+    setChatError("");
+  }
+
   async function handleClear() {
     if (!sessionId) return;
     const confirmed = window.confirm("Clear this session and delete its indexed chunks?");
@@ -201,14 +241,12 @@ export default function App() {
 
   return (
     <div className="min-h-full bg-[radial-gradient(ellipse_at_top,_#fbf8f3,_#e7e0d4)] text-stone-900">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5 lg:px-6">
+      <header className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-5 lg:px-6">
         <div>
           <p className="font-serif text-3xl tracking-tight text-teal-950">DocuRAG</p>
           <p className="text-sm text-stone-500">Answers grounded in your documents</p>
         </div>
-        <p className="hidden rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-teal-900 shadow-sm sm:block">
-          Retrieve, then generate
-        </p>
+        <Pipeline uploading={uploading} sending={sending} indexed={canChat || totalChunks > 0} answered={messages.some((message) => message.role === "assistant" && message.content)} />
       </header>
       <main className="mx-auto grid w-full max-w-6xl items-stretch gap-4 px-4 pb-6 lg:h-[calc(100vh-6.5rem)] lg:grid-cols-[22rem_minmax(0,1fr)] lg:px-6">
         <UploadPanel
@@ -231,6 +269,7 @@ export default function App() {
           error={chatError}
           canChat={canChat}
           onSend={handleSend}
+          onNewChat={handleNewChat}
         />
       </main>
     </div>
