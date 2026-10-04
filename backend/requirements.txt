@@ -1,0 +1,14 @@
+# Web API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# RAG: LangChain split packages (core + the integrations we actually call)
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-google-genai>=2.1.0
+langchain-chroma>=0.2.0
+chromadb>=0.5.23,<2
+
+# PDF text extraction. pypdf is the maintained successor of PyPDF2.
+pypdf>=5.1.0

@@ -1,0 +1,20 @@
+Northwind Studio Employee Handbook
+This handbook is a fictional sample document for DocuRAG. It describes policies for Northwind Studio, a product-design company. Nothing in this file refers to any real employer.
+
+Time off
+Full-time employees accrue paid vacation at a rate of 1.5 days per month, which comes to 18 vacation days per year. Vacation may be used after the 90th day of employment. New hires also receive 2 floating holidays during their first calendar year, in addition to the company holidays listed on the intranet. Vacation requests of more than five consecutive business days must be submitted in Workday at least three weeks in advance. Unused vacation up to 10 days rolls into the next year; anything above that is paid out on the last pay date of December. Sick time is separate from vacation and accrues at 8 hours per month, with a cap of 80 hours.
+
+Where we work
+Northwind Studio's headquarters is at 418 Market Street, Suite 900, Portland, Oregon. The reception desk is staffed from 8:30 a.m. to 5:00 p.m. Pacific Time. The default schedule is in the office on Tuesday, Wednesday, and Thursday. Monday and Friday are remote days for every team except the hardware lab, which posts its own rotation. Employees who live more than 50 miles from Portland may request a fully remote arrangement with their director. Visitors sign in at the lobby kiosk and must be escorted above the ninth floor.
+
+Equipment
+Each employee receives a laptop stipend of $1,200 every three years, paid through the expenses tool after IT approves the model. The stipend covers a laptop and a single monitor. Extra peripherals come out of the team budget, not the personal stipend. Broken machines are replaced by IT within five business days if the damage is from ordinary use. Report a lost laptop to it-help@northwind.example within 24 hours so the device can be locked.
+
+Security
+Passwords must be at least 14 characters and are stored in the company 1Password vault. Do not paste passwords, access tokens, or customer data into chat tools or support tickets. Production access requires a ticket in the #access-requests channel and approval from the system owner. The on-call rotation for the platform team pays $200 for each week of primary coverage. Incidents are declared in the #pager channel. Severity 1 incidents, which are full outages of the client portal, page the primary and the engineering director immediately.
+
+Leave and learning
+Primary caregivers receive 16 weeks of paid parental leave, which can start up to two weeks before the due date or placement date. The learning budget is $800 per calendar year and can be spent on courses, books, or conference tickets. Managers approve the expense before the employee enrolls. Unused learning budget does not roll over.
+
+Expenses and pay
+Submit expense reports within 21 days of the purchase. Meals while traveling are reimbursed up to $70 per day. The office coffee bar is free; client dinners require a director's approval in advance. Payday is the 15th and the last business day of the month. Questions about a paycheck go to payroll@northwind.example.
