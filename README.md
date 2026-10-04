@@ -9,7 +9,7 @@ A large language model will happily answer from memory. That is useful, and it i
 1. **Retrieve.** Search the uploaded documents for the few passages that are actually about the question.
 2. **Generate.** Give the model only those passages, and tell it to answer from them or to say it does not know.
 
-The model is still the writer. Your documents are the source of facts. If the vacation policy is not in the retrieved passages, DocuRAG is instructed to reply exactly: `I don't have enough information`.
+The model is still the writer. Your documents are the evidence. A fact that is written down is stated directly. A question that needs a judgment, such as a likely salary, gets a short inference labeled "This is not stated in the document," built only from roles, skills, and dates that are in the file. If the file is not about the question at all, DocuRAG replies exactly: `I don't have enough information`.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ flowchart LR
 In words:
 
 - **Upload.** The API extracts text (pypdf for PDFs, plain decode for TXT), splits it with LangChain's `RecursiveCharacterTextSplitter`, and asks Gemini's embedding model for a vector per chunk. ChromaDB stores the vector, the chunk text, and metadata (filename, chunk index, page) in a collection that belongs to one `session_id`.
-- **Question.** The same embedding model turns the question into a vector. Chroma returns the 4 nearest chunks from that session only. Those chunks are pasted into a prompt that forbids outside knowledge, Gemini Flash writes the answer, and the API returns the answer together with the chunks it just retrieved.
+- **Question.** The same embedding model turns the question into a vector. Chroma returns the nearest chunks from that session only, up to 8, so a short document is included whole. Those chunks are pasted into a prompt. Gemini Flash answers facts from them and, when the question needs it, reasons from them without pretending an inference was written in the file. The API returns the answer together with the chunks it just retrieved.
 
 The browser remembers the session id (and the chat transcript) in `localStorage`. The vectors stay on disk in Chroma. The Gemini API key stays on the backend.
 
@@ -59,7 +59,7 @@ You need a Gemini API key from [Google AI Studio](https://aistudio.google.com/ap
 
 ```text
 GEMINI_API_KEY          required on the backend only
-GEMINI_CHAT_MODEL       optional, default gemini-2.5-flash
+GEMINI_CHAT_MODEL       optional, default gemini-3.8-flash
 GEMINI_EMBED_MODEL      optional, default gemini-embedding-001
 CHROMA_PERSIST_DIR      optional, default backend/chroma_data
 CORS_ORIGINS            optional, defaults include localhost:5173 and :8080
@@ -73,7 +73,7 @@ copy .env.example .env
 # then edit .env and set GEMINI_API_KEY
 ```
 
-`gemini-1.5-flash` is retired. The default chat model is `gemini-2.5-flash`. If your key is rejected for that id, set `GEMINI_CHAT_MODEL` to a flash model listed in the current [Gemini model docs](https://ai.google.dev/gemini-api/docs/models). Keep the embedding model stable for the life of a Chroma directory: vectors from two different embedding models are not comparable. If you change `GEMINI_EMBED_MODEL`, delete `chroma_data` (or run `docker compose down -v`) and upload again.
+`gemini-1.5-flash` is retired, and new API keys cannot call `gemini-2.5-flash`. The default chat model is `gemini-3.8-flash`. If your key is rejected for that id, set `GEMINI_CHAT_MODEL` to a flash model listed in the current [Gemini model docs](https://ai.google.dev/gemini-api/docs/models). Keep the embedding model stable for the life of a Chroma directory: vectors from two different embedding models are not comparable. If you change `GEMINI_EMBED_MODEL`, delete `chroma_data` (or run `docker compose down -v`) and upload again.
 
 ### Run with Docker Compose
 
@@ -163,9 +163,9 @@ Re-uploading the same filename appends another copy of its chunks. Clear the ses
 
 **Overlap** repeats the end of one chunk at the start of the next, so a fact sitting on the cut still appears whole in one of them. The detail that surprises people: LangChain does not copy 150 raw characters. It keeps previous *pieces* while they fit in the overlap budget. A paragraph is longer than 150 characters, so splitting on blank lines leaves the next chunk with no shared text. DocuRAG splits on spaces instead. Each piece is a word, about 150 characters of words are repeated, and a word is never cut in half. Newlines stay in the text, so the model still sees paragraph breaks.
 
-**Top-k is 4.** The question is embedded with the same model that embedded the chunks, and Chroma returns the 4 nearest neighbors under cosine distance. Cosine compares the direction of two vectors, which is what retrieval embeddings are trained for. Fewer than 4 chunks would be more precise and easier to miss the answer. Many more would add noise, cost more tokens, and give the model extra text to get distracted by. If the session has fewer than 4 chunks, you simply get all of them.
+**Top-k is up to 8.** The question is embedded with the same model that embedded the chunks, and Chroma returns the nearest neighbors under cosine distance. Cosine compares the direction of two vectors, which is what retrieval embeddings are trained for. A resume or handbook is only a handful of chunks, so retrieving all of them lets the model connect a skill on page 1 with a project on page 2. Past 8 chunks the search stays capped: more context costs tokens and can distract the model. If the session has fewer chunks than the cap, you simply get all of them.
 
-**Why the prompt is grounded.** The chat model never receives the file. It receives the question plus those 4 excerpts, and the system prompt says to use only that text. That cuts hallucination because the model is no longer free to fill a gap from pretraining: a number that is not in the excerpts is not supposed to appear in the answer. It can still misread a passage that *is* in the context, which is why the UI shows the snippets. Those sources are the retrieved chunks in rank order (best match first), not a citation string the model made up.
+**Why the prompt is grounded.** The chat model never receives the raw file. It receives the question plus the retrieved excerpts. Facts have to come from that text. When you ask for something the file does not state, such as a salary, the model may infer from the evidence it was given, and it has to say the number is not in the document. It still must not invent an employer, a date, or a metric. Unrelated questions get `I don't have enough information`. The UI shows the snippets because the model can still misread a passage that is in the context. Those sources are the retrieved chunks in rank order (best match first), not a citation string the model made up.
 
 Two details that matter when you explain this:
 

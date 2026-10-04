@@ -42,7 +42,7 @@ export default function ChatPanel({ messages, sending, error, canChat, onSend })
       <div className="border-b border-stone-100 px-5 py-4">
         <h2 className="text-sm font-semibold text-stone-900">Ask a question</h2>
         <p className="mt-1 text-sm text-stone-500">
-          Answers are written only from the excerpts retrieval finds. If those excerpts do not contain the answer, DocuRAG says so.
+          Answers use your documents as evidence. DocuRAG can summarize and reason from them, and it labels anything the file does not actually say.
         </p>
       </div>
 

@@ -8,7 +8,7 @@ services:
       - "8000:8000"
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-2.5-flash}
+      GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-3.8-flash}
       GEMINI_EMBED_MODEL: ${GEMINI_EMBED_MODEL:-gemini-embedding-001}
       CHROMA_PERSIST_DIR: /data/chroma
       CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080

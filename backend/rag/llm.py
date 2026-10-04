@@ -13,10 +13,22 @@ Why two models?
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from rag.errors import ConfigurationError
 
-DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
+# docurag/.env is gitignored. Load it so a local uvicorn picks up GEMINI_API_KEY
+# without the key having to sit on the command line.
+try:
+    from dotenv import load_dotenv
+
+    _ROOT = Path(__file__).resolve().parents[2]
+    load_dotenv(_ROOT / ".env")
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+except ImportError:
+    pass
+
+DEFAULT_CHAT_MODEL = "gemini-3.8-flash"
 DEFAULT_EMBED_MODEL = "gemini-embedding-001"
 
 
@@ -78,8 +90,8 @@ def get_chat_model():
     """Flash chat model that writes the grounded answer.
 
     Temperature is 0 so the model sticks to the excerpts instead of
-    embellishing them. ``gemini-2.5-flash`` is the default; set
-    ``GEMINI_CHAT_MODEL`` if your key should use a newer flash id.
+    embellishing them. ``gemini-3.8-flash`` is the default. New API keys
+    cannot call ``gemini-2.5-flash``. Set ``GEMINI_CHAT_MODEL`` to override.
     """
 
     from langchain_google_genai import ChatGoogleGenerativeAI

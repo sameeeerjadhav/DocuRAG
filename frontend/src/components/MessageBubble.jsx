@@ -25,7 +25,7 @@ export default function MessageBubble({ message }) {
         <p className="whitespace-pre-wrap">{message.content}</p>
         {declined ? (
           <p className="mt-2 text-xs text-stone-500">
-            The retrieved excerpts did not contain an answer, so the model was instructed not to guess.
+            Nothing in the indexed documents was relevant, so DocuRAG did not guess.
           </p>
         ) : null}
         <SourceList sources={message.sources} />
