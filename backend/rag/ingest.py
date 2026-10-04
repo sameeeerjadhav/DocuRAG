@@ -2,9 +2,12 @@
 
 Pipeline (this is the "index" half of RAG):
 
-1. Extract plain text from each PDF or TXT file.
+1. Extract plain text from each PDF or TXT file. A PDF with no text layer
+   is rendered and transcribed (OCR) before it is chunked.
 2. Split that text into overlapping chunks.
-3. Hand the chunks to Chroma, which calls Gemini to embed each one and
+3. Skip a file whose bytes are already in the session. A same-name file with
+   new bytes replaces the old chunks.
+4. Hand the chunks to Chroma, which calls Gemini to embed each one and
    stores the vector plus the original text and metadata.
 
 The chat path never re-reads the file. It only searches this index.
@@ -12,8 +15,10 @@ The chat path never re-reads the file. It only searches this index.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -30,11 +35,14 @@ from rag.errors import (
 from rag.vectorstore import (
     chroma_lock,
     collection_exists,
+    delete_ids,
     delete_session,
     get_vectorstore,
+    index_fingerprints,
     list_documents,
     new_session_id,
     parse_session_id,
+    source_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +65,11 @@ MAX_FILE_MB = MAX_FILE_BYTES // (1024 * 1024)
 # A cap so one huge paste cannot fire thousands of embedding calls.
 MAX_CHUNKS_PER_UPLOAD = 400
 
+# Below this many extracted characters, treat the PDF as a scan and OCR it.
+_SPARSE_TEXT = 80
+
+Progress = Callable[[str], None]
+
 _SPLITTER = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
@@ -75,16 +88,25 @@ _SPLITTER = RecursiveCharacterTextSplitter(
 )
 
 
-def ingest_files(session_id: str | None, files: list[tuple[str, bytes]]) -> dict:
-    """Validate and chunk every file, then embed and store them.
+def ingest_files(
+    session_id: str | None,
+    files: list[tuple[str, bytes]],
+    progress: Progress | None = None,
+) -> dict:
+    """Validate and chunk every file, then embed and store the new ones.
 
     ``files`` is a list of ``(filename, raw_bytes)``. Passing an existing
     session id appends to that collection. Passing none starts a new session.
+    ``progress`` receives short status strings while the work is running.
 
     Chunking happens before the collection is created, so a bad file (wrong
     type, empty, too large) fails the whole request and does not leave a
     partial index.
     """
+
+    def note(message: str) -> None:
+        if progress:
+            progress(message)
 
     if session_id and str(session_id).strip():
         session_id = parse_session_id(session_id)
@@ -96,21 +118,71 @@ def ingest_files(session_id: str | None, files: list[tuple[str, bytes]]) -> dict
     if len(files) > MAX_FILES:
         raise RagError(f"Upload at most {MAX_FILES} files at a time.")
 
-    documents: list[Document] = []
+    prepared: list[tuple[list[Document], str, str]] = []
     for filename, data in files:
-        documents.extend(chunk_file(filename, data))
+        safe_name = _clean_filename(filename)
+        note(f"Reading {safe_name}")
+        documents = chunk_file(safe_name, data, progress)
+        digest = hashlib.sha256(data).hexdigest()
+        prepared.append((documents, digest, safe_name))
 
-    if len(documents) > MAX_CHUNKS_PER_UPLOAD:
+    if sum(len(documents) for documents, _, _ in prepared) > MAX_CHUNKS_PER_UPLOAD:
         raise RagError(
-            f"This upload would create {len(documents)} chunks, above the limit "
+            "This upload would create too many chunks, above the limit "
             f"of {MAX_CHUNKS_PER_UPLOAD}. Upload a shorter document."
         )
 
     with chroma_lock():
-        return _store_chunks(session_id, documents)
+        original_names, hashes = index_fingerprints(session_id)
+        to_store: list[Document] = []
+        skipped: list[dict] = []
+        replaced_ids: list[str] = []
+        replaced_names: set[str] = set()
+        queued: set[str] = set()
+
+        for documents, digest, safe_name in prepared:
+            if digest in hashes:
+                skipped.append({"filename": safe_name, "reason": "already indexed"})
+                note(f"Skipped {safe_name}; already indexed")
+                continue
+            if safe_name in queued:
+                to_store = [doc for doc in to_store if doc.metadata.get("source") != safe_name]
+            if safe_name in original_names and safe_name not in replaced_names:
+                replaced_names.add(safe_name)
+                replaced_ids.extend(source_ids(session_id, safe_name))
+                note(f"Replacing {safe_name}")
+            for doc in documents:
+                doc.metadata = {**doc.metadata, "content_hash": digest}
+            to_store.extend(documents)
+            queued.add(safe_name)
+            hashes.add(digest)
+
+        if not to_store:
+            listed = _empty_or_existing(session_id)
+            listed["chunks_indexed"] = 0
+            listed["skipped"] = skipped
+            return listed
+
+        note(f"Embedding {len(to_store)} chunks")
+        _store_chunks(session_id, to_store)
+        if replaced_ids:
+            delete_ids(session_id, replaced_ids)
+
+    listed = list_documents(session_id)
+    return {
+        "session_id": session_id,
+        "chunks_indexed": len(to_store),
+        "total_chunks": listed["total_chunks"],
+        "documents": listed["documents"],
+        "skipped": skipped,
+    }
 
 
-def chunk_file(filename: str, data: bytes) -> list[Document]:
+def chunk_file(
+    filename: str,
+    data: bytes,
+    progress: Progress | None = None,
+) -> list[Document]:
     """Extract text and split one file into Documents ready for embedding."""
 
     safe_name = _clean_filename(filename)
@@ -123,7 +195,7 @@ def chunk_file(filename: str, data: bytes) -> list[Document]:
         raise FileTooLargeError(safe_name, MAX_FILE_MB)
 
     if suffix == ".pdf":
-        pages = _extract_pdf(safe_name, data)
+        pages = _extract_pdf(safe_name, data, progress)
         file_type = "pdf"
     else:
         pages = [_extract_txt(safe_name, data)]
@@ -176,7 +248,19 @@ def _clean_filename(filename: str) -> str:
     return name
 
 
-def _extract_pdf(filename: str, data: bytes) -> list[dict]:
+def _extract_pdf(filename: str, data: bytes, progress: Progress | None = None) -> list[dict]:
+    pages = _pdf_text_pages(filename, data)
+    total = sum(len((page["text"] or "").strip()) for page in pages)
+    if total >= _SPARSE_TEXT:
+        return pages
+    if progress:
+        progress(f"Reading scanned pages in {filename}")
+    from rag.ocr import transcribe_pdf
+
+    return transcribe_pdf(filename, data, progress)
+
+
+def _pdf_text_pages(filename: str, data: bytes) -> list[dict]:
     from io import BytesIO
 
     try:
@@ -213,12 +297,22 @@ def _extract_txt(filename: str, data: bytes) -> dict:
     return {"page": None, "text": text}
 
 
-def _store_chunks(session_id: str, documents: list[Document]) -> dict:
+def _empty_or_existing(session_id: str) -> dict:
+    if collection_exists(session_id):
+        from rag.vectorstore import _list_documents
+
+        return _list_documents(session_id)
+    return {"session_id": session_id, "total_chunks": 0, "documents": []}
+
+
+def _store_chunks(session_id: str, documents: list[Document]) -> None:
     """Embed ``documents`` and upsert them into this session's collection.
 
     ``add_documents`` is the step that calls the embedding model. We do not
     embed manually: the vector store embeds on write and again on query, so
     both sides are guaranteed to use the function we passed in.
+
+    Caller holds ``chroma_lock``.
     """
 
     existed = collection_exists(session_id)
@@ -240,13 +334,6 @@ def _store_chunks(session_id: str, documents: list[Document]) -> dict:
         raise ModelCallError(exc) from exc
 
     logger.info("Indexed %s chunks for session %s", len(documents), session_id)
-    listed = list_documents(session_id)
-    return {
-        "session_id": session_id,
-        "chunks_indexed": len(documents),
-        "total_chunks": listed["total_chunks"],
-        "documents": listed["documents"],
-    }
 
 
 def _rollback(store, ids: list[str], session_id: str, existed: bool) -> None:

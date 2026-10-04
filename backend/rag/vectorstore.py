@@ -197,3 +197,67 @@ def chunk_count(session_id: str) -> int:
     if collection is None:
         return 0
     return int(collection.count())
+
+
+def index_fingerprints(session_id: str) -> tuple[set[str], set[str]]:
+    """Filenames and content hashes already stored. Caller holds ``chroma_lock``."""
+
+    collection = open_collection(session_id, create=False)
+    if collection is None:
+        return set(), set()
+    data = collection.get(include=["metadatas"])
+    names: set[str] = set()
+    hashes: set[str] = set()
+    for meta in data.get("metadatas") or []:
+        meta = meta or {}
+        if meta.get("source"):
+            names.add(str(meta["source"]))
+        if meta.get("content_hash"):
+            hashes.add(str(meta["content_hash"]))
+    return names, hashes
+
+
+def source_ids(session_id: str, filename: str) -> list[str]:
+    """Chunk ids whose metadata source is ``filename``. Caller holds the lock."""
+
+    collection = open_collection(session_id, create=False)
+    if collection is None:
+        return []
+    data = collection.get(include=["metadatas"])
+    ids: list[str] = []
+    for chunk_id, meta in zip(data.get("ids") or [], data.get("metadatas") or []):
+        if str((meta or {}).get("source") or "") == filename:
+            ids.append(chunk_id)
+    return ids
+
+
+def delete_ids(session_id: str, ids: list[str]) -> None:
+    """Delete specific chunk ids. Caller holds the lock."""
+
+    if not ids:
+        return
+    collection = open_collection(session_id, create=False)
+    if collection is None:
+        return
+    collection.delete(ids=ids)
+
+
+def remove_document(session_id: str, filename: str) -> dict:
+    """Drop one file's chunks and return the session's remaining document list."""
+
+    session_id = parse_session_id(session_id)
+    name = Path(filename or "").name.replace("\x00", "").strip()
+    if not name:
+        raise RagError("filename is required.")
+
+    with chroma_lock():
+        collection = open_collection(session_id, create=False)
+        if collection is None:
+            raise SessionNotFoundError(session_id)
+        ids = source_ids(session_id, name)
+        if not ids:
+            raise RagError(f"'{name}' is not in this session.", 404)
+        delete_ids(session_id, ids)
+        if int(collection.count()) == 0:
+            return {"session_id": session_id, "total_chunks": 0, "documents": []}
+        return _list_documents(session_id)

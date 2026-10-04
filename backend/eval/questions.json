@@ -1,0 +1,18 @@
+[
+  {
+    "question": "How many vacation days do employees get?",
+    "expect": ["18 vacation"]
+  },
+  {
+    "question": "What is the laptop stipend?",
+    "expect": ["$1,200"]
+  },
+  {
+    "question": "Where is headquarters?",
+    "expect": ["418 Market Street"]
+  },
+  {
+    "question": "How long is parental leave?",
+    "expect": ["16 weeks"]
+  }
+]

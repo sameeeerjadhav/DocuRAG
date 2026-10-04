@@ -9,10 +9,14 @@ export default function UploadPanel({
   documents,
   loadingDocs,
   uploading,
+  uploadStatus,
+  removing,
   error,
+  note,
   sessionId,
   totalChunks,
   onUpload,
+  onRemove,
   onClear,
 }) {
   const inputRef = useRef(null);
@@ -67,12 +71,10 @@ export default function UploadPanel({
           </svg>
         </span>
         <p className="mt-3 text-sm font-medium text-stone-800">
-          {uploading ? "Indexing documents…" : "Drop files here or browse"}
+          {uploading ? uploadStatus || "Indexing documents…" : "Drop files here or browse"}
         </p>
         <p className="mt-1 text-xs text-stone-500">
-          {uploading
-            ? "Chunking and embedding. Larger files can take a minute."
-            : "Up to 10 files, 20 MB each"}
+          {uploading ? "This can take a minute for a scan or a large file." : "Up to 10 files, 20 MB each"}
         </p>
       </button>
       <input
@@ -88,6 +90,9 @@ export default function UploadPanel({
         <p role="alert" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
         </p>
+      ) : null}
+      {note ? (
+        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-950">{note}</p>
       ) : null}
 
       <div className="mt-4 flex items-baseline justify-between px-1">
@@ -117,9 +122,19 @@ export default function UploadPanel({
                 {doc.chunk_count} chunk{doc.chunk_count === 1 ? "" : "s"}
               </p>
             </div>
-            <span className="shrink-0 rounded-md bg-white px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-stone-500">
-              {extensionOf(doc.filename)}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-stone-500">
+                {extensionOf(doc.filename)}
+              </span>
+              <button
+                type="button"
+                onClick={() => onRemove(doc.filename)}
+                disabled={uploading || removing}
+                className="text-xs font-medium text-stone-500 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Remove
+              </button>
+            </div>
           </li>
         ))}
       </ul>

@@ -55,10 +55,17 @@ export default function ChatPanel({ messages, sending, error, canChat, onSend })
             </p>
           </div>
         ) : null}
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
-        ))}
-        {sending ? <TypingIndicator /> : null}
+        {messages.map((message) =>
+          message.role === "assistant" && !message.content && !(message.sources || []).length ? null : (
+            <MessageBubble key={message.id} message={message} />
+          )
+        )}
+        {sending &&
+        messages[messages.length - 1]?.role === "assistant" &&
+        !messages[messages.length - 1]?.content &&
+        !(messages[messages.length - 1]?.sources || []).length ? (
+          <TypingIndicator />
+        ) : null}
         <div ref={bottomRef} />
       </div>
 

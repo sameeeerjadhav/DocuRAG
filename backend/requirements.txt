@@ -13,3 +13,5 @@ chromadb>=0.5.23,<2
 
 # PDF text extraction. pypdf is the maintained successor of PyPDF2.
 pypdf>=5.1.0
+# Renders scanned PDF pages so Gemini can transcribe them. No Poppler or Tesseract.
+pymupdf>=1.24.0

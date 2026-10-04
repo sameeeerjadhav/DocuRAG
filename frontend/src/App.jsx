@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { askQuestion, clearSession, listDocuments, uploadDocuments } from "./api.js";
+import { clearSession, listDocuments, removeDocument, streamQuestion, uploadDocuments } from "./api.js";
 import ChatPanel from "./components/ChatPanel.jsx";
 import UploadPanel from "./components/UploadPanel.jsx";
 
@@ -30,8 +30,11 @@ export default function App() {
   const [messages, setMessages] = useState(stored.messages);
   const [documents, setDocuments] = useState(() => (stored.sessionId ? null : []));
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [removing, setRemoving] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [uploadNote, setUploadNote] = useState("");
   const [chatError, setChatError] = useState("");
 
   useEffect(() => {
@@ -39,7 +42,8 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEY);
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId, messages }));
+    const storedMessages = messages.map(({ pending, ...message }) => message);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId, messages: storedMessages }));
   }, [sessionId, messages]);
 
   // Restore the document list for a session id saved in this browser.
@@ -78,20 +82,42 @@ export default function App() {
       setUploadError("Upload PDF or TXT files only.");
       return;
     }
-    const skipped = allowed.length !== files.length;
+    const ignoredTypes = allowed.length !== files.length;
     setUploadError("");
+    setUploadNote("");
+    setUploadStatus("Starting upload…");
     setUploading(true);
     try {
-      const data = await uploadDocuments(allowed, sessionId);
+      const data = await uploadDocuments(allowed, sessionId, setUploadStatus);
       setSessionId(data.session_id);
       setDocuments(data.documents || []);
-      setUploadError(
-        skipped ? "Indexed the PDF and TXT files. Other file types were skipped." : ""
-      );
+      const notes = [];
+      if (ignoredTypes) notes.push("Only PDF and TXT files were uploaded.");
+      for (const skipped of data.skipped || []) {
+        notes.push(`${skipped.filename} was already indexed.`);
+      }
+      setUploadNote(notes.join(" "));
     } catch (error) {
       setUploadError(error.message);
     } finally {
       setUploading(false);
+      setUploadStatus("");
+    }
+  }
+
+  async function handleRemove(filename) {
+    if (!sessionId || removing) return;
+    const confirmed = window.confirm(`Remove ${filename} from this session?`);
+    if (!confirmed) return;
+    setUploadError("");
+    setRemoving(true);
+    try {
+      const data = await removeDocument(sessionId, filename);
+      setDocuments(data.documents || []);
+    } catch (error) {
+      setUploadError(error.message);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -100,6 +126,7 @@ export default function App() {
     const confirmed = window.confirm("Clear this session and delete its indexed chunks?");
     if (!confirmed) return;
     setUploadError("");
+    setUploadNote("");
     try {
       await clearSession(sessionId);
       setSessionId(null);
@@ -117,23 +144,58 @@ export default function App() {
       return;
     }
     setChatError("");
-    setMessages((current) => [...current, { id: newId(), role: "user", content: question }]);
+    const history = messages
+      .filter((message) => message.content && (message.role === "user" || message.role === "assistant"))
+      .slice(-6)
+      .map((message) => ({
+        role: message.role,
+        content: String(message.content).slice(0, 1500),
+      }));
+    const assistantId = newId();
+    setMessages((current) => [
+      ...current,
+      { id: newId(), role: "user", content: question },
+      { id: assistantId, role: "assistant", content: "", sources: [], pending: true },
+    ]);
     setSending(true);
     try {
-      const data = await askQuestion(sessionId, question);
-      setMessages((current) => [
-        ...current,
-        {
-          id: newId(),
-          role: "assistant",
-          content: data.answer,
-          sources: data.sources || [],
-        },
-      ]);
+      await streamQuestion(sessionId, question, history, (event, data) => {
+        if (event === "sources") {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId ? { ...message, sources: data.sources || [] } : message
+            )
+          );
+        }
+        if (event === "token") {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: `${message.content}${data.text || ""}` }
+                : message
+            )
+          );
+        }
+        if (event === "done" && data.answer) {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId ? { ...message, content: data.answer, pending: false } : message
+            )
+          );
+        }
+      });
     } catch (error) {
       setChatError(error.message);
+      setMessages((current) =>
+        current.filter((message) => message.id !== assistantId || message.content)
+      );
     } finally {
       setSending(false);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId ? { ...message, pending: false } : message
+        )
+      );
     }
   }
 
@@ -153,10 +215,14 @@ export default function App() {
           documents={documents || []}
           loadingDocs={documents === null}
           uploading={uploading}
+          uploadStatus={uploadStatus}
+          removing={removing}
           error={uploadError}
+          note={uploadNote}
           sessionId={sessionId}
           totalChunks={totalChunks}
           onUpload={handleUpload}
+          onRemove={handleRemove}
           onClear={handleClear}
         />
         <ChatPanel

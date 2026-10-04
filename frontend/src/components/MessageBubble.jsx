@@ -22,7 +22,12 @@ export default function MessageBubble({ message }) {
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-teal-800">
           DocuRAG
         </p>
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        <p className="whitespace-pre-wrap">
+          {message.content}
+          {message.pending ? (
+            <span className="ml-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 animate-pulse bg-teal-800" />
+          ) : null}
+        </p>
         {declined ? (
           <p className="mt-2 text-xs text-stone-500">
             Nothing in the indexed documents was relevant, so DocuRAG did not guess.

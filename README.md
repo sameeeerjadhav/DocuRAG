@@ -34,8 +34,8 @@ flowchart LR
 
 In words:
 
-- **Upload.** The API extracts text (pypdf for PDFs, plain decode for TXT), splits it with LangChain's `RecursiveCharacterTextSplitter`, and asks Gemini's embedding model for a vector per chunk. ChromaDB stores the vector, the chunk text, and metadata (filename, chunk index, page) in a collection that belongs to one `session_id`.
-- **Question.** The same embedding model turns the question into a vector. Chroma returns the nearest chunks from that session only, up to 8, so a short document is included whole. Those chunks are pasted into a prompt. Gemini Flash answers facts from them and, when the question needs it, reasons from them without pretending an inference was written in the file. The API returns the answer together with the chunks it just retrieved.
+- **Upload.** The API extracts text (pypdf for PDFs, plain decode for TXT). A PDF with almost no text layer is treated as a scan: PyMuPDF renders the pages and Gemini transcribes them. Text is split with LangChain's `RecursiveCharacterTextSplitter`. Gemini's embedding model returns a vector per chunk. ChromaDB stores the vector, the chunk text, and metadata (filename, chunk index, page, content hash) in a collection that belongs to one `session_id`. Uploading the same bytes again is skipped. Uploading the same filename with different bytes replaces that file.
+- **Question.** A follow-up is rewritten into a standalone search query. The same embedding model turns that query into a vector. Chroma returns the nearest chunks from that session only, up to 8, so a short document is included whole. Those chunks, plus the recent conversation, are pasted into a prompt. Gemini Flash answers facts from them and, when the question needs it, reasons from them without pretending an inference was written in the file. Estimates such as pay are a range tied to the role and seniority in the excerpts. The UI streams the answer and shows the chunks that were retrieved.
 
 The browser remembers the session id (and the chat transcript) in `localStorage`. The vectors stay on disk in Chroma. The Gemini API key stays on the backend.
 
@@ -43,11 +43,14 @@ The browser remembers the session id (and the chat transcript) in `localStorage`
 docurag/
   backend/
     main.py                 # FastAPI routes
-    rag/ingest.py           # extract, chunk, embed, store
+    rag/ingest.py           # extract, chunk, embed, store, skip duplicates
     rag/retrieve.py         # top-k search, grounded prompt, Gemini answer
+    rag/ocr.py              # scanned PDF pages, transcribed by Gemini
     rag/vectorstore.py      # persistent Chroma, one collection per session
     rag/llm.py              # Gemini chat + embedding clients
+    rag/ratelimit.py        # per-address request limits
     rag/errors.py
+    eval/run_eval.py        # overlap, dedup, and handbook retrieval checks
   frontend/                 # React + Vite + Tailwind
   samples/employee-handbook.txt
   docker-compose.yml
@@ -148,14 +151,17 @@ curl.exe -X POST http://localhost:8000/chat/SESSION_ID_FROM_THE_UPLOAD -H "Conte
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/documents/upload` | Multipart field `files` (repeatable) and optional form field `session_id`. Returns `session_id`, `chunks_indexed`, and the document list. |
+| `POST` | `/documents/upload` | Multipart field `files` (repeatable) and optional form field `session_id`. Returns `session_id`, `chunks_indexed`, `skipped`, and the document list. |
+| `POST` | `/documents/upload/stream` | Same upload as server-sent events: `status` messages, then `result`. |
 | `GET` | `/documents/{session_id}` | Filenames and chunk counts. |
 | `DELETE` | `/documents/{session_id}` | Deletes that session's Chroma collection. |
-| `POST` | `/chat/{session_id}` | JSON body `{ "question": "..." }`. Returns `answer` and `sources` (filename, chunk index, page, snippet). |
+| `DELETE` | `/documents/{session_id}/file?filename=` | Removes one file's chunks. |
+| `POST` | `/chat/{session_id}` | JSON body `{ "question": "...", "history": [] }`. Returns `answer` and `sources` (filename, chunk index, page, snippet). |
+| `POST` | `/chat/{session_id}/stream` | Same answer as server-sent events: `sources`, then `token` pieces, then `done`. |
 
-Expected failures: empty file, unsupported type, encrypted or scanned PDF with no text layer, chatting before any chunks exist, missing `GEMINI_API_KEY`, and Gemini API errors (quota, model name, network). Those return a JSON `detail` string.
+Expected failures: empty file, unsupported type, a scan that still has no readable text, chatting before any chunks exist, missing `GEMINI_API_KEY`, more than 10 uploads or 30 questions per minute from one address (HTTP 429), and Gemini API errors (quota, model name, network). Those return a JSON `detail` string, or an `error` event on the stream endpoints.
 
-Re-uploading the same filename appends another copy of its chunks. Clear the session to start over.
+Uploading the same file bytes again does not add a second copy. Uploading the same filename with different contents replaces that file. Remove one file from the sidebar, or clear the session to drop everything.
 
 ## How retrieval works
 
@@ -165,11 +171,15 @@ Re-uploading the same filename appends another copy of its chunks. Clear the ses
 
 **Top-k is up to 8.** The question is embedded with the same model that embedded the chunks, and Chroma returns the nearest neighbors under cosine distance. Cosine compares the direction of two vectors, which is what retrieval embeddings are trained for. A resume or handbook is only a handful of chunks, so retrieving all of them lets the model connect a skill on page 1 with a project on page 2. Past 8 chunks the search stays capped: more context costs tokens and can distract the model. If the session has fewer chunks than the cap, you simply get all of them.
 
-**Why the prompt is grounded.** The chat model never receives the raw file. It receives the question plus the retrieved excerpts. Facts have to come from that text. When you ask for something the file does not state, such as a salary, the model may infer from the evidence it was given, and it has to say the number is not in the document. It still must not invent an employer, a date, or a metric. Unrelated questions get `I don't have enough information`. The UI shows the snippets because the model can still misread a passage that is in the context. Those sources are the retrieved chunks in rank order (best match first), not a citation string the model made up.
+**Why the prompt is grounded.** The chat model never receives the raw file. It receives the question, the recent conversation, and the retrieved excerpts. Facts have to come from that text. When you ask for something the file does not state, such as a salary, the model may infer from the evidence it was given, and it has to say the number is not in the document. A pay estimate has to be a range, and it has to name the role, skills, or seniority it used. If those anchors are missing, it does not invent a figure. It still must not invent an employer, a date, or a metric. Unrelated questions get `I don't have enough information`. The UI shows the snippets because the model can still misread a passage that is in the context. Those sources are the retrieved chunks in rank order (best match first), not a citation string the model made up.
+
+A follow-up such as "how often is that paid?" is a weak search string on its own. When the request includes earlier turns, a short rewrite turns it into a standalone query before the embedding step. The answer prompt still sees the conversation, so "the second internship" can be resolved, but the excerpts remain the evidence.
 
 Two details that matter when you explain this:
 
 - Document chunks and the question are embedded with retrieval task types (`RETRIEVAL_DOCUMENT` and `RETRIEVAL_QUERY`) on `gemini-embedding-001`. Same model, slightly different instructions, so "how many vacation days?" can land next to a paragraph that says "18 vacation days" even when the wording does not match.
 - Each session is its own Chroma collection. Search cannot see another session's files, and clearing a session is one collection delete. A shared collection plus a metadata filter would also work, but forgetting the filter once would leak another upload into the prompt.
 
-PDFs are split per page before chunking, so a chunk cut from page 4 keeps `page: 4`. Scanned PDFs have no text layer; pypdf cannot read them, and the API says so. Those files need OCR first.
+PDFs are split per page before chunking, so a chunk cut from page 4 keeps `page: 4`. If pypdf finds almost no text, the page is a scan. PyMuPDF renders up to 15 pages and Gemini transcribes the images. A page that is still empty after that is rejected.
+
+From the `backend` directory, `python -m eval.run_eval` checks chunk overlap, duplicate skipping, the rate limit, and PDF rendering without calling Gemini. When `GEMINI_API_KEY` is set it also indexes the sample handbook in a temporary Chroma directory and checks that vacation days, the stipend, the address, and parental leave come back.

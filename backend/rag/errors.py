@@ -25,8 +25,7 @@ class UnsupportedFileTypeError(RagError):
 class EmptyDocumentError(RagError):
     def __init__(self, filename: str):
         super().__init__(
-            f"'{filename}' has no extractable text. Empty files and scanned "
-            "image-only PDFs cannot be indexed (they need OCR first).",
+            f"'{filename}' has no extractable text, including after reading scanned pages.",
             400,
         )
 
@@ -53,6 +52,11 @@ class SessionNotFoundError(RagError):
             f"No indexed documents found for session {session_id}.",
             404,
         )
+
+
+class RateLimitError(RagError):
+    def __init__(self):
+        super().__init__("Too many requests. Wait a minute and try again.", 429)
 
 
 class ConfigurationError(RagError):
